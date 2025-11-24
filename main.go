@@ -30,7 +30,7 @@ type LoginConfig struct {
 }
 
 type Config struct {
-	URL              string
+	URLs             []string
 	Time             string
 	TelegramBotToken string
 	TelegramChatID   int64
@@ -65,8 +65,8 @@ func main() {
 		log.Fatalf("Ошибка инициализации Telegram бота: %v", err)
 	}
 
-	log.Printf("Демон запущен. URL: %s, интервал: %v, разрешение: %dx%d",
-		config.URL, config.Interval, config.Screen.Width, config.Screen.Height)
+	log.Printf("Демон запущен. URL: %v, интервал: %v, разрешение: %dx%d",
+		config.URLs, config.Interval, config.Screen.Width, config.Screen.Height)
 
 	if config.Login != nil {
 		log.Println("Режим с авторизацией включен")
@@ -151,9 +151,16 @@ func loadConfig(filename string) error {
 
 	section := cfg.Section("")
 
-	config.URL = section.Key("url").String()
-	if config.URL == "" {
+	// Парсим URL (может быть один или несколько через запятую)
+	urlStr := section.Key("url").String()
+	if urlStr == "" {
 		return fmt.Errorf("url не указан в конфигурации")
+	}
+
+	// Разделяем URL по запятой
+	config.URLs = parseURLs(urlStr)
+	if len(config.URLs) == 0 {
+		return fmt.Errorf("не удалось распарсить URL")
 	}
 
 	timeStr := section.Key("time").String()
@@ -214,6 +221,22 @@ func loadConfig(filename string) error {
 	return nil
 }
 
+func parseURLs(urlStr string) []string {
+	// Разделяем по запятой
+	urls := strings.Split(urlStr, ",")
+
+	// Очищаем от пробелов и пустых строк
+	var result []string
+	for _, url := range urls {
+		cleanURL := strings.TrimSpace(url)
+		if cleanURL != "" {
+			result = append(result, cleanURL)
+		}
+	}
+
+	return result
+}
+
 func parseScreenConfig(screenStr string) (ScreenConfig, error) {
 	// Удаляем все пробелы
 	screenStr = strings.ReplaceAll(screenStr, " ", "")
@@ -255,7 +278,7 @@ func parseScreenConfig(screenStr string) (ScreenConfig, error) {
 
 func run() {
 	// Выполняем сразу при запуске
-	takeAndSendScreenshot()
+	takeAndSendScreenshots()
 
 	// Запускаем периодическое выполнение
 	ticker := time.NewTicker(config.Interval)
@@ -264,45 +287,63 @@ func run() {
 	for {
 		select {
 		case <-ticker.C:
-			takeAndSendScreenshot()
+			takeAndSendScreenshots()
 		}
 	}
 }
 
-func takeAndSendScreenshot() {
+func takeAndSendScreenshots() {
 	// Проверяем и ротируем лог при необходимости
 	checkAndRotateLog()
 
-	log.Printf("Создание скриншота для %s (разрешение: %dx%d)",
-		config.URL, config.Screen.Width, config.Screen.Height)
+	log.Printf("Начинаем создание скриншотов для %d URL", len(config.URLs))
 
+	successCount := 0
+	for i, url := range config.URLs {
+		log.Printf("Создание скриншота %d/%d для %s", i+1, len(config.URLs), url)
+
+		err := takeAndSendScreenshot(url)
+		if err != nil {
+			log.Printf("Ошибка создания скриншота для %s: %v", url, err)
+		} else {
+			successCount++
+			log.Printf("Скриншот для %s успешно отправлен", url)
+		}
+
+		// Небольшая пауза между скриншотами чтобы не перегружать
+		if i < len(config.URLs)-1 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	log.Printf("Завершено создание скриншотов: %d успешно из %d", successCount, len(config.URLs))
+}
+
+func takeAndSendScreenshot(url string) error {
 	// Создаем временный файл для скриншота
 	tmpfile, err := os.CreateTemp("", "screenshot-*.png")
 	if err != nil {
-		log.Printf("Ошибка создания временного файла: %v", err)
-		return
+		return fmt.Errorf("ошибка создания временного файла: %v", err)
 	}
 	defer os.Remove(tmpfile.Name())
 	defer tmpfile.Close()
 
 	// Создаем скриншот
-	err = takeScreenshot(tmpfile)
+	err = takeScreenshot(url, tmpfile)
 	if err != nil {
-		log.Printf("Ошибка создания скриншота: %v", err)
-		return
+		return fmt.Errorf("ошибка создания скриншота: %v", err)
 	}
 
 	// Отправляем в Telegram
-	err = sendToTelegram(tmpfile.Name())
+	err = sendToTelegram(url, tmpfile.Name())
 	if err != nil {
-		log.Printf("Ошибка отправки в Telegram: %v", err)
-		return
+		return fmt.Errorf("ошибка отправки в Telegram: %v", err)
 	}
 
-	log.Printf("Скриншот успешно отправлен в Telegram")
+	return nil
 }
 
-func takeScreenshot(output *os.File) error {
+func takeScreenshot(url string, output *os.File) error {
 	// Создаем контекст с опциями для headless-режима
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.Flag("headless", true),
@@ -324,7 +365,7 @@ func takeScreenshot(output *os.File) error {
 	ctx, cancel = context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	// Выполняем авторизацию если нужно
+	// Выполняем авторизацию если нужно (только для первого URL в сессии)
 	if config.Login != nil {
 		err := performLogin(ctx)
 		if err != nil {
@@ -336,7 +377,7 @@ func takeScreenshot(output *os.File) error {
 	// Переходим на целевую страницу и делаем скриншот
 	var buf []byte
 	err := chromedp.Run(ctx,
-		chromedp.Navigate(config.URL),
+		chromedp.Navigate(url),
 		chromedp.Sleep(3*time.Second), // Ждем загрузки страницы
 		// Дополнительно устанавливаем размер viewport (на всякий случай)
 		chromedp.EmulateViewport(int64(config.Screen.Width), int64(config.Screen.Height)),
@@ -376,7 +417,7 @@ func performLogin(ctx context.Context) error {
 	)
 }
 
-func sendToTelegram(filename string) error {
+func sendToTelegram(url string, filename string) error {
 	// Открываем файл
 	file, err := os.Open(filename)
 	if err != nil {
@@ -395,8 +436,8 @@ func sendToTelegram(filename string) error {
 		status = "защищенная (требовалась авторизация)"
 	}
 
-	photoConfig.Caption = fmt.Sprintf("Скриншот %s\nСтатус: %s\nРазрешение: %dx%d\nВремя: %s",
-		config.URL, status, config.Screen.Width, config.Screen.Height,
+	photoConfig.Caption = fmt.Sprintf("Скриншот: %s\nСтатус: %s\nРазрешение: %dx%d\nВремя: %s",
+		url, status, config.Screen.Width, config.Screen.Height,
 		time.Now().Format("2006-01-02 15:04:05"))
 
 	// Отправляем сообщение
