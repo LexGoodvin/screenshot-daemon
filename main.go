@@ -40,18 +40,16 @@ type Config struct {
 }
 
 var (
-	config Config
-	bot    *tgbotapi.BotAPI
+	config  Config
+	bot     *tgbotapi.BotAPI
+	logPath string
 )
 
 func main() {
-	// Настраиваем логгирование
-	logFile, err := os.OpenFile("/var/log/screenshot-daemon.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+	// Инициализируем логирование
+	err := initLogging()
 	if err != nil {
-		log.Printf("Не удалось открыть файл лога: %v, использую stdout", err)
-	} else {
-		defer logFile.Close()
-		log.SetOutput(logFile)
+		log.Printf("Не удалось инициализировать логирование: %v, использую stdout", err)
 	}
 
 	log.Println("=== Запуск screenshot демона ===")
@@ -76,6 +74,73 @@ func main() {
 
 	// Запускаем основной цикл
 	run()
+}
+
+func initLogging() error {
+	// Пробуем разные пути для логов
+	possiblePaths := []string{
+		"/var/log/screenshot-daemon.log",
+		os.Getenv("HOME") + "/screenshot-daemon.log",
+		"./screenshot-daemon.log",
+	}
+
+	for _, path := range possiblePaths {
+		// Проверяем можем ли писать в этот путь
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err == nil {
+			logPath = path
+			log.SetOutput(file)
+			log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
+			// Закрываем старый файл если открывали до этого
+			if file != nil {
+				file.Close()
+			}
+
+			log.Printf("Логирование инициализировано: %s", path)
+			return nil
+		}
+	}
+
+	return fmt.Errorf("не удалось инициализировать логирование ни в одном из путей: %v", possiblePaths)
+}
+
+func checkAndRotateLog() {
+	if logPath == "" {
+		return
+	}
+
+	// Проверяем размер лог-файла
+	info, err := os.Stat(logPath)
+	if os.IsNotExist(err) {
+		return
+	}
+	if err != nil {
+		log.Printf("Ошибка проверки размера лога: %v", err)
+		return
+	}
+
+	// 100 МБ лимит
+	const maxSize = 100 * 1024 * 1024
+	if info.Size() < maxSize {
+		return
+	}
+
+	// Ротируем лог
+	//backupPath := logPath + ".old"
+
+	// Закрываем текущий лог перед ротацией
+	if logPath != "" {
+		// Переоткрываем файл в режиме перезаписи
+		file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		if err != nil {
+			log.Printf("Ошибка ротации лога: %v", err)
+			return
+		}
+		file.Close()
+	}
+
+	log.Printf("Лог-файл ротирован (достигнут лимит 100МБ)")
 }
 
 func loadConfig(filename string) error {
@@ -205,6 +270,9 @@ func run() {
 }
 
 func takeAndSendScreenshot() {
+	// Проверяем и ротируем лог при необходимости
+	checkAndRotateLog()
+
 	log.Printf("Создание скриншота для %s (разрешение: %dx%d)",
 		config.URL, config.Screen.Width, config.Screen.Height)
 
