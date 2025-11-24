@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -13,16 +14,19 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+type ScreenConfig struct {
+	Width  int
+	Height int
+}
+
 type LoginConfig struct {
-	URL      string
-	Username string
-	Password string
-	// Селекторы для полей ввода (CSS или XPath)
+	URL              string
+	Username         string
+	Password         string
 	UsernameSelector string
 	PasswordSelector string
 	SubmitSelector   string
-	// Дополнительные настройки
-	WaitAfterLogin time.Duration
+	WaitAfterLogin   time.Duration
 }
 
 type Config struct {
@@ -31,6 +35,7 @@ type Config struct {
 	TelegramBotToken string
 	TelegramChatID   int64
 	Interval         time.Duration
+	Screen           ScreenConfig
 	Login            *LoginConfig
 }
 
@@ -62,7 +67,9 @@ func main() {
 		log.Fatalf("Ошибка инициализации Telegram бота: %v", err)
 	}
 
-	log.Printf("Демон запущен. URL: %s, интервал: %v", config.URL, config.Interval)
+	log.Printf("Демон запущен. URL: %s, интервал: %v, разрешение: %dx%d",
+		config.URL, config.Interval, config.Screen.Width, config.Screen.Height)
+
 	if config.Login != nil {
 		log.Println("Режим с авторизацией включен")
 	}
@@ -109,6 +116,19 @@ func loadConfig(filename string) error {
 		return fmt.Errorf("ошибка парсинга chat_id: %v", err)
 	}
 
+	// Загружаем настройки разрешения экрана
+	screenStr := section.Key("screen").String()
+	if screenStr != "" {
+		screenConfig, err := parseScreenConfig(screenStr)
+		if err != nil {
+			return fmt.Errorf("ошибка парсинга разрешения экрана: %v", err)
+		}
+		config.Screen = screenConfig
+	} else {
+		// Значения по умолчанию
+		config.Screen = ScreenConfig{Width: 1920, Height: 1080}
+	}
+
 	// Проверяем настройки авторизации
 	loginURL := section.Key("login_url").String()
 	username := section.Key("login_username").String()
@@ -129,6 +149,45 @@ func loadConfig(filename string) error {
 	return nil
 }
 
+func parseScreenConfig(screenStr string) (ScreenConfig, error) {
+	// Удаляем все пробелы
+	screenStr = strings.ReplaceAll(screenStr, " ", "")
+
+	// Разделяем по символам x, X, или ×
+	parts := strings.FieldsFunc(screenStr, func(r rune) bool {
+		return r == 'x' || r == 'X' || r == '×'
+	})
+
+	if len(parts) != 2 {
+		return ScreenConfig{}, fmt.Errorf("неверный формат разрешения. Ожидается: 1024x768")
+	}
+
+	width, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return ScreenConfig{}, fmt.Errorf("неверная ширина: %v", err)
+	}
+
+	height, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return ScreenConfig{}, fmt.Errorf("неверная высота: %v", err)
+	}
+
+	// Проверяем минимальные значения
+	if width < 100 || height < 100 {
+		return ScreenConfig{}, fmt.Errorf("разрешение слишком маленькое. Минимум: 100x100")
+	}
+
+	// Проверяем максимальные значения (разумный предел)
+	if width > 10000 || height > 10000 {
+		return ScreenConfig{}, fmt.Errorf("разрешение слишком большое. Максимум: 10000x10000")
+	}
+
+	return ScreenConfig{
+		Width:  width,
+		Height: height,
+	}, nil
+}
+
 func run() {
 	// Выполняем сразу при запуске
 	takeAndSendScreenshot()
@@ -146,7 +205,8 @@ func run() {
 }
 
 func takeAndSendScreenshot() {
-	log.Printf("Создание скриншота для %s", config.URL)
+	log.Printf("Создание скриншота для %s (разрешение: %dx%d)",
+		config.URL, config.Screen.Width, config.Screen.Height)
 
 	// Создаем временный файл для скриншота
 	tmpfile, err := os.CreateTemp("", "screenshot-*.png")
@@ -181,7 +241,9 @@ func takeScreenshot(output *os.File) error {
 		chromedp.Flag("disable-gpu", true),
 		chromedp.Flag("no-sandbox", true),
 		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("ignore-certificate-errors", true), // Игнорируем SSL ошибки
+		chromedp.Flag("ignore-certificate-errors", true),
+		// Устанавливаем размер окна
+		chromedp.WindowSize(config.Screen.Width, config.Screen.Height),
 	)
 
 	allocCtx, cancel := chromedp.NewExecAllocator(context.Background(), opts...)
@@ -208,6 +270,8 @@ func takeScreenshot(output *os.File) error {
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(config.URL),
 		chromedp.Sleep(3*time.Second), // Ждем загрузки страницы
+		// Дополнительно устанавливаем размер viewport (на всякий случай)
+		chromedp.EmulateViewport(int64(config.Screen.Width), int64(config.Screen.Height)),
 		chromedp.FullScreenshot(&buf, 90),
 	)
 	if err != nil {
@@ -263,8 +327,9 @@ func sendToTelegram(filename string) error {
 		status = "защищенная (требовалась авторизация)"
 	}
 
-	photoConfig.Caption = fmt.Sprintf("Скриншот %s\nСтатус: %s\nВремя: %s",
-		config.URL, status, time.Now().Format("2006-01-02 15:04:05"))
+	photoConfig.Caption = fmt.Sprintf("Скриншот %s\nСтатус: %s\nРазрешение: %dx%d\nВремя: %s",
+		config.URL, status, config.Screen.Width, config.Screen.Height,
+		time.Now().Format("2006-01-02 15:04:05"))
 
 	// Отправляем сообщение
 	_, err = bot.Send(photoConfig)
