@@ -1,87 +1,25 @@
-# screenshot-daemon
-make url screenshot by time and send in telegram ( linux daemon)
-Install:
-# Ubuntu/Debian
+# Screenshot Daemon / Демон для скриншотов
+
+![Systemd](https://img.shields.io/badge/systemd-daemon-blue)
+![Telegram](https://img.shields.io/badge/telegram-bot-blue)
+![Chromium](https://img.shields.io/badge/chromium-headless-green)
+
+A Linux daemon that takes screenshots of web pages at specified intervals and sends them to Telegram.
+Linux демон, который делает скриншоты веб-страниц через заданные интервалы и отправляет их в Telegram.
+
+## Features / Особенности
+- ✅ Uses Chrome Headless for screenshots / Использует Chrome Headless для создания скриншотов
+- ✅ Supports any web page / Поддерживает любые веб-страницы
+- ✅ Automatically restarts on errors / Автоматически перезапускается при ошибках
+- ✅ Logs all actions / Логирует все действия
+- ✅ Easily configurable via INI file / Легко настраивается через INI-файл
+- ✅ Can be run as a system daemon / Можно запускать как системный демон
+
+## Installation / Установка
+
+### Install Chromium / Установите Chromium
+
+**Ubuntu/Debian:**
+```bash
 sudo apt update
 sudo apt install chromium-browser
-
-# CentOS/RHEL
-sudo yum install chromium
-
-Run as a systemd daemon
-Create the file /etc/systemd/system/screenshot-daemon.service:
-
-ini
-[Unit]
-Description=Screenshot Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/path/to/screenshot-daemon
-ExecStart=/path/to/screenshot-daemon/screenshot-daemon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-Start the daemon:
-
-bash
-sudo systemctl daemon-reload
-sudo systemctl enable screenshot-daemon
-sudo systemctl start screenshot-daemon
-Features
-Uses Chrome Headless to create screenshots
-
-Supports any web page
-
-Automatically restarts on errors
-
-Logs all actions
-
-Easily configurable via INI file
-
-Can be run as a system daemon.
-
-The daemon will periodically take screenshots of the specified page and send them to the Telegram group according to the specified schedule.
-
-Запуск как демона systemd
-Создайте файл /etc/systemd/system/screenshot-daemon.service:
-
-ini
-[Unit]
-Description=Screenshot Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=ubuntu
-WorkingDirectory=/path/to/screenshot-daemon
-ExecStart=/path/to/screenshot-daemon/screenshot-daemon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-Запустите демона:
-
-bash
-sudo systemctl daemon-reload
-sudo systemctl enable screenshot-daemon
-sudo systemctl start screenshot-daemon
-Особенности
-Использует Chrome Headless для создания скриншотов
-
-Поддерживает любые веб-страницы
-
-Автоматически перезапускается при ошибках
-
-Логирует все действия
-
-Легко настраивается через INI-файл
-
-Можно запускать как системный демон
-
-Демон будет периодически делать скриншоты указанной страницы и отправлять их в Telegram группу согласно заданному расписанию.
