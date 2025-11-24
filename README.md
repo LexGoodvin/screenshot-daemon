@@ -23,3 +23,34 @@ Linux демон, который делает скриншоты веб-стра
 ```bash
 sudo apt update
 sudo apt install chromium-browser
+
+
+### Примеры использования:
+### Несколько публичных сайтов:
+
+ini
+url = "https://google.com, https://github.com, https://stackoverflow.com"
+time = "30m"
+Микс публичных и защищенных:
+
+ini
+url = "https://example.com/public, https://example.com/private/dashboard"
+login_url = "https://example.com/login"
+login_username = "user"
+login_password = "pass"
+С разными протоколами:
+
+ini
+url = "https://site1.com, http://site2.com, https://site3.com/admin"
+Особенности реализации:
+Гибкий парсинг URL - поддерживает пробелы после запятых
+
+Последовательная обработка - скриншоты делаются по очереди
+
+Паузы между запросами - 2 секунды между скриншотами
+
+Логирование прогресса - видно какой URL обрабатывается
+
+Индивидуальная обработка ошибок - если один URL упал, остальные продолжают работать
+
+Общая авторизация - логинимся один раз для всех URL в одной сессии
